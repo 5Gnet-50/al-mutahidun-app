@@ -81,3 +81,26 @@ export const GIFT_STATUS_LABELS: Record<string, { label: string; color: string }
   used: { label: 'مستخدمة', color: 'text-muted-foreground' },
   expired: { label: 'منتهية', color: 'text-destructive' },
 };
+
+export const ROLE_LABELS: Record<string, { label: string; color: string }> = {
+  user: { label: 'عميل', color: 'text-primary' },
+  agent: { label: 'وكيل', color: 'text-accent' },
+  marketer: { label: 'مسوق', color: 'text-success' },
+  admin: { label: 'مدير', color: 'text-destructive' },
+};
+
+export const CARD_STATUS_LABELS: Record<string, { label: string; color: string }> = {
+  available: { label: 'متاحة', color: 'text-success' },
+  sold: { label: 'مباعة', color: 'text-primary' },
+  exchanged: { label: 'مبادلة', color: 'text-accent' },
+  unavailable: { label: 'غير متاحة', color: 'text-muted-foreground' },
+};
+
+export const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  kuraimi: 'بنك الكريمي',
+  amqi: 'بنك العمقي',
+  qatibi: 'بنك القطيبي',
+  inma: 'بنك الإنماء',
+};
+
+export const GIFT_VALUES = [200, 300, 500, 1000, 2000, 5000] as const;

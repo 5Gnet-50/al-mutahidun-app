@@ -1,4 +1,4 @@
-export type UserRole = 'user' | 'agent' | 'admin';
+export type UserRole = 'user' | 'agent' | 'marketer' | 'admin';
 export type UserStatus = 'active' | 'suspended';
 export type AgentStatus = 'pending' | 'active' | 'suspended';
 export type CardStatus = 'available' | 'sold' | 'exchanged' | 'unavailable';
@@ -134,4 +134,30 @@ export interface AuditLog {
   entity_id: string;
   details: Record<string, unknown> | null;
   created_at: string;
+}
+
+export interface Plan {
+  id: string;
+  network_id: string;
+  name: string;
+  value: number;
+  duration_hours: number;
+  speed_mbps: number | null;
+  description: string | null;
+  is_active: boolean;
+  sort_order: number;
+  created_at: string;
+  network?: Network;
+}
+
+export interface AgentProfile {
+  id: string;
+  user_id: string;
+  commission_rate: number;
+  total_sales: number;
+  total_commission: number;
+  status: AgentStatus;
+  permissions: Record<string, unknown>;
+  created_at: string;
+  profile?: Profile;
 }
