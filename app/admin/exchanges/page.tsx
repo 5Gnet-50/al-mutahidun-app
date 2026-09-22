@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/lib/supabase-client';
 import { formatCurrency, formatDateTime } from '@/lib/helpers';
-import type { Exchange, Profile, Network, card as CardType } from '@/lib/types';
+import type { Exchange, Profile, Network, card  CardType } from '@/lib/types';
 import { CreditCard } from 'lucide-react';
 
 export default function AdminExchangesPage() {
