@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/lib/supabase-client';
 import { formatCurrency, formatDateTime } from '@/lib/helpers';
-import type { Exchange, Profile, Network, Card } from '@/lib/types';
+import type { Exchange, Profile, Network, CardType } from '@/lib/types';
 import { CreditCard } from 'lucide-react';
 
 export default function AdminExchangesPage() {
@@ -15,7 +15,7 @@ export default function AdminExchangesPage() {
 }
 
 function ExchangesContent() {
-  const [exchanges, setExchanges] = useState<(Exchange & { profile?: Profile; network?: Network; card?: Card })[]>([]);
+  const [exchanges, setExchanges] = useState<(Exchange & { profile?: Profile; network?: Network; card?: CardType })[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -25,7 +25,7 @@ function ExchangesContent() {
         .select('*, profile:profiles!exchanges_user_id_fkey(name, username), network:networks(*), card:cards(code, value)')
         .order('created_at', { ascending: false })
         .limit(100);
-      setExchanges((data as unknown as (Exchange & { profile?: Profile; network?: Network; card?: Card })[]) || []);
+      setExchanges((data as unknown as (Exchange & { profile?: Profile; network?: Network; card?: CardType })[]) || []);
       setLoading(false);
     }
     fetchExchanges();
