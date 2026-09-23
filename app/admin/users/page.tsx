@@ -15,10 +15,11 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { supabase } from '@/lib/supabase-client';
+import { useAuth } from '@/lib/auth-context';
 import { useAppToast } from '@/lib/use-app-toast';
 import { formatCurrency, formatDate, ROLE_LABELS } from '@/lib/helpers';
 import type { Profile } from '@/lib/types';
-import { Search, Users, MoreVertical, Ban, CheckCircle, Edit3, UserPlus } from 'lucide-react';
+import { Search, Users, MoreVertical, Ban, CheckCircle, Edit3 } from 'lucide-react';
 
 export default function AdminUsersPage() {
   return <AdminShell><UsersContent /></AdminShell>;
@@ -26,6 +27,7 @@ export default function AdminUsersPage() {
 
 function UsersContent() {
   const toast = useAppToast();
+  const { profile } = useAuth();
   const [users, setUsers] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -52,30 +54,46 @@ function UsersContent() {
     u.phone.includes(search)
   );
 
+  const callAdminUpdate = async (targetId: string, updates: {
+    name?: string; balance?: number; status?: string; role?: string;
+  }) => {
+    if (!profile) { toast.error('غير مصرح'); return false; }
+    const { data, error } = await supabase.rpc('admin_update_profile', {
+      p_target_user_id: targetId,
+      p_admin_id: profile.id,
+      p_name: updates.name ?? null,
+      p_balance: updates.balance ?? null,
+      p_status: updates.status ?? null,
+      p_role: updates.role ?? null,
+    });
+    if (error || (data && (data as Record<string, unknown>).error)) {
+      const msg = (data && (data as Record<string, unknown>).error) || 'حدث خطأ';
+      toast.error(msg as string);
+      return false;
+    }
+    return true;
+  };
+
   const handleToggleStatus = async (user: Profile) => {
     const newStatus = user.status === 'active' ? 'suspended' : 'active';
-    const { error } = await supabase
-      .from('profiles')
-      .update({ status: newStatus })
-      .eq('id', user.id);
-    if (error) { toast.error('حدث خطأ'); return; }
-    toast.success(newStatus === 'active' ? 'تم تفعيل المستخدم' : 'تم إيقاف المستخدم');
-    fetchUsers();
+    const ok = await callAdminUpdate(user.id, { status: newStatus });
+    if (ok) {
+      toast.success(newStatus === 'active' ? 'تم تفعيل المستخدم' : 'تم إيقاف المستخدم');
+      fetchUsers();
+    }
   };
 
   const handleEditSubmit = async () => {
     if (!selected) return;
-    const { error } = await supabase
-      .from('profiles')
-      .update({
-        name: editName.trim(),
-        balance: parseFloat(editBalance) || 0,
-      })
-      .eq('id', selected.id);
-    if (error) { toast.error('حدث خطأ'); return; }
-    toast.success('تم تحديث المستخدم');
-    setShowEdit(false);
-    fetchUsers();
+    const ok = await callAdminUpdate(selected.id, {
+      name: editName.trim(),
+      balance: parseFloat(editBalance) || 0,
+    });
+    if (ok) {
+      toast.success('تم تحديث المستخدم');
+      setShowEdit(false);
+      fetchUsers();
+    }
   };
 
   const openEdit = (user: Profile) => {

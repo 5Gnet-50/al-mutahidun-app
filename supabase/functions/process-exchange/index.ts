@@ -20,7 +20,8 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const supabase = createClient(
+    // Verify the user with their JWT (anon key + user token)
+    const userClient = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_ANON_KEY")!,
       {
@@ -29,7 +30,7 @@ Deno.serve(async (req: Request) => {
       }
     );
 
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user } } = await userClient.auth.getUser();
     if (!user) {
       return new Response(JSON.stringify({ error: "غير مصرح" }), {
         status: 401,
@@ -46,175 +47,74 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Check for duplicate exchange
-    if (idempotencyKey) {
-      const { data: existing } = await supabase
-        .from("exchanges")
-        .select("id, status, reference")
-        .eq("metadata->>idempotency_key", idempotencyKey)
-        .eq("user_id", user.id)
-        .maybeSingle();
+    if (!idempotencyKey) {
+      return new Response(JSON.stringify({ error: "مفتاح Idempotency مطلوب" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-      if (existing) {
-        return new Response(JSON.stringify({
-          success: true,
-          alreadyProcessed: true,
-          exchangeId: existing.id,
-          reference: existing.reference,
-        }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+    // Use service role client to call the atomic RPC function
+    // The RPC function uses FOR UPDATE SKIP LOCKED to atomically claim a card,
+    // preventing race conditions and duplicate card issuance
+    const serviceClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      { auth: { persistSession: false } }
+    );
+
+    const { data: result, error: rpcError } = await serviceClient.rpc(
+      "process_gift_exchange",
+      {
+        p_user_id: user.id,
+        p_user_gift_id: userGiftId,
+        p_network_id: networkId,
+        p_idempotency_key: idempotencyKey,
       }
-    }
+    );
 
-    // Verify the user_gift belongs to user and is available
-    const { data: userGift, error: ugError } = await supabase
-      .from("user_gifts")
-      .select(`
-        id, status, gift_id, user_id,
-        gifts(id, name, value, price)
-      `)
-      .eq("id", userGiftId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (ugError || !userGift) {
-      return new Response(JSON.stringify({ error: "الهدية غير موجودة" }), {
-        status: 404,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    if (userGift.status !== "available") {
-      return new Response(JSON.stringify({ error: "الهدية مستخدمة أو منتهية" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const gift = userGift.gifts as any;
-    if (!gift) {
-      return new Response(JSON.stringify({ error: "بيانات الهدية غير مكتملة" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // Find an available card matching the gift value on the selected network
-    const { data: card, error: cardError } = await supabase
-      .from("cards")
-      .select("id, code, value, status, network_id")
-      .eq("network_id", networkId)
-      .eq("value", gift.value)
-      .eq("status", "available")
-      .limit(1)
-      .maybeSingle();
-
-    if (cardError || !card) {
-      return new Response(JSON.stringify({
-        error: "لا توجد بطاقات متاحة بهذه القيمة في الشبكة المختارة حالياً"
-      }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // Atomically claim the card: update status from 'available' to 'exchanged' only if still available
-    const { data: claimedCard, error: claimError } = await supabase
-      .from("cards")
-      .update({
-        status: "exchanged",
-        assigned_to_user_id: user.id,
-        assigned_at: new Date().toISOString(),
-      })
-      .eq("id", card.id)
-      .eq("status", "available")
-      .select()
-      .maybeSingle();
-
-    if (claimError || !claimedCard) {
-      // Card was claimed by another request (race condition)
-      return new Response(JSON.stringify({
-        error: "البطاقة لم تعد متاحة، الرجاء المحاولة مرة أخرى"
-      }), {
-        status: 409,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // Mark user_gift as used
-    const { error: useGiftError } = await supabase
-      .from("user_gifts")
-      .update({
-        status: "used",
-        used_at: new Date().toISOString(),
-      })
-      .eq("id", userGiftId)
-      .eq("status", "available");
-
-    if (useGiftError) {
-      // Try to release the card
-      await supabase.from("cards")
-        .update({ status: "available", assigned_to_user_id: null, assigned_at: null })
-        .eq("id", claimedCard.id);
-      return new Response(JSON.stringify({ error: "حدث خطأ أثناء تحديث الهدية" }), {
+    if (rpcError) {
+      return new Response(JSON.stringify({ error: "حدث خطأ أثناء معالجة المبادلة" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const exchangeRef = `EX-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-    const txRef = `TX-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+    const rpcResult = result as Record<string, unknown>;
 
-    // Record exchange
-    const { data: exchange, error: exError } = await supabase.from("exchanges").insert({
-      user_id: user.id,
-      user_gift_id: userGiftId,
-      network_id: networkId,
-      card_id: claimedCard.id,
-      status: "success",
-      reference: exchangeRef,
-    }).select().single();
-
-    if (exError) {
-      return new Response(JSON.stringify({ error: "حدث خطأ أثناء حفظ المبادلة" }), {
-        status: 500,
+    if (rpcResult.error) {
+      return new Response(JSON.stringify({ error: rpcResult.error }), {
+        status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Record transaction
-    await supabase.from("transactions").insert({
-      user_id: user.id,
-      type: "exchange",
-      amount: gift.value,
-      status: "success",
-      reference: txRef,
-      description: `مبادلة ${gift.name} ببطاقة شبكة`,
-      metadata: { exchange_id: exchange.id, card_id: claimedCard.id, idempotency_key: idempotencyKey },
-    });
-
-    // Send notification
-    await supabase.from("notifications").insert({
-      user_id: user.id,
-      title: "تمت المبادلة بنجاح",
-      message: `تم مبادلة ${gift.name} ببطاقة شبكة. كود البطاقة: ${claimedCard.code}`,
-      type: "exchange",
-    });
+    if (rpcResult.duplicate) {
+      return new Response(JSON.stringify({
+        success: true,
+        alreadyProcessed: true,
+        exchangeId: rpcResult.exchange_id,
+        reference: rpcResult.reference,
+        cardCode: rpcResult.card_code,
+        cardValue: rpcResult.card_value,
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     return new Response(JSON.stringify({
       success: true,
-      exchangeId: exchange.id,
-      reference: exchangeRef,
-      cardCode: claimedCard.code,
-      cardValue: claimedCard.value,
-      giftName: gift.name,
+      exchangeId: rpcResult.exchange_id,
+      reference: rpcResult.reference,
+      cardCode: rpcResult.card_code,
+      cardValue: rpcResult.card_value,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
   } catch (err) {
-    return new Response(JSON.stringify({ error: "حدث خطأ غير متوقع" }), {
+    const message = err instanceof Error ? err.message : "حدث خطأ غير متوقع";
+    return new Response(JSON.stringify({ error: message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

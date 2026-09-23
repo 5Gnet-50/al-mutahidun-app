@@ -25,6 +25,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { supabase } from '@/lib/supabase-client';
+import { useAuth } from '@/lib/auth-context';
 import { useAppToast } from '@/lib/use-app-toast';
 import { formatCurrency, formatDate } from '@/lib/helpers';
 import type { AgentProfile, Profile } from '@/lib/types';
@@ -32,6 +33,7 @@ import { Megaphone, Plus, CheckCircle, Ban } from 'lucide-react';
 
 function MarketersInner() {
   const toast = useAppToast();
+  const { profile } = useAuth();
   const [marketers, setMarketers] = useState<AgentProfile[]>([]);
   const [candidates, setCandidates] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,7 +74,16 @@ function MarketersInner() {
       status: 'active',
     });
     if (error) { toast.error('حدث خطأ'); return; }
-    await supabase.from('profiles').update({ role: 'marketer' }).eq('id', selectedUser);
+    if (profile) {
+      await supabase.rpc('admin_update_profile', {
+        p_target_user_id: selectedUser,
+        p_admin_id: profile.id,
+        p_name: null,
+        p_balance: null,
+        p_status: null,
+        p_role: 'marketer',
+      });
+    }
     toast.success('تم إضافة مسوق');
     setShowAdd(false);
     fetchMarketers();

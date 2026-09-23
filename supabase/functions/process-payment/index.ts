@@ -20,7 +20,8 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const supabase = createClient(
+    // Verify the user with their JWT (anon key + user token)
+    const userClient = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_ANON_KEY")!,
       {
@@ -29,7 +30,7 @@ Deno.serve(async (req: Request) => {
       }
     );
 
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user } } = await userClient.auth.getUser();
     if (!user) {
       return new Response(JSON.stringify({ error: "غير مصرح" }), {
         status: 401,
@@ -46,146 +47,71 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Check for duplicate payment via idempotency key
-    if (idempotencyKey) {
-      const { data: existing } = await supabase
-        .from("payments")
-        .select("id, status, reference")
-        .eq("metadata->>idempotency_key", idempotencyKey)
-        .eq("user_id", user.id)
-        .maybeSingle();
+    if (!idempotencyKey) {
+      return new Response(JSON.stringify({ error: "مفتاح Idempotency مطلوب" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-      if (existing) {
-        return new Response(JSON.stringify({
-          success: true,
-          alreadyProcessed: true,
-          paymentId: existing.id,
-          reference: existing.reference,
-        }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+    // Use service role client to call the atomic RPC function
+    // The RPC function validates the gift, checks idempotency, and performs
+    // all inserts atomically within a single database transaction
+    const serviceClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      { auth: { persistSession: false } }
+    );
+
+    const { data: result, error: rpcError } = await serviceClient.rpc(
+      "process_gift_payment",
+      {
+        p_user_id: user.id,
+        p_gift_id: giftId,
+        p_method: method,
+        p_idempotency_key: idempotencyKey,
       }
-    }
+    );
 
-    // Fetch gift
-    const { data: gift, error: giftError } = await supabase
-      .from("gifts")
-      .select("id, name, value, price, is_active")
-      .eq("id", giftId)
-      .maybeSingle();
-
-    if (giftError || !gift) {
-      return new Response(JSON.stringify({ error: "الهدية غير موجودة" }), {
-        status: 404,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    if (!gift.is_active) {
-      return new Response(JSON.stringify({ error: "الهدية غير متاحة حالياً" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // Generate references
-    const paymentRef = `PAY-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-    const txRef = `TX-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-
-    // Simulate payment processing (MVP)
-    await new Promise((r) => setTimeout(r, 1500));
-
-    // 95% success rate for simulation
-    const isSuccess = Math.random() > 0.05;
-
-    if (!isSuccess) {
-      // Record failed payment
-      await supabase.from("payments").insert({
-        user_id: user.id,
-        gift_id: giftId,
-        method,
-        amount: gift.price,
-        status: "failed",
-        reference: paymentRef,
-      });
-
-      await supabase.from("transactions").insert({
-        user_id: user.id,
-        type: "purchase",
-        amount: gift.price,
-        status: "failed",
-        reference: txRef,
-        description: `فشل شراء ${gift.name}`,
-      });
-
-      return new Response(JSON.stringify({ error: "فشلت عملية الدفع، الرجاء المحاولة مرة أخرى" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // Record successful payment
-    const { data: payment, error: payError } = await supabase.from("payments").insert({
-      user_id: user.id,
-      gift_id: giftId,
-      method,
-      amount: gift.price,
-      status: "success",
-      reference: paymentRef,
-    }).select().single();
-
-    if (payError) {
-      return new Response(JSON.stringify({ error: "حدث خطأ أثناء حفظ عملية الدفع" }), {
+    if (rpcError) {
+      return new Response(JSON.stringify({ error: "حدث خطأ أثناء معالجة الدفع" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Issue gift to user
-    const { data: userGift, error: giftIssueError } = await supabase.from("user_gifts").insert({
-      user_id: user.id,
-      gift_id: giftId,
-      status: "available",
-    }).select().single();
+    const rpcResult = result as Record<string, unknown>;
 
-    if (giftIssueError) {
-      return new Response(JSON.stringify({ error: "حدث خطأ أثناء إصدار الهدية" }), {
-        status: 500,
+    if (rpcResult.error) {
+      return new Response(JSON.stringify({ error: rpcResult.error }), {
+        status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Record transaction
-    await supabase.from("transactions").insert({
-      user_id: user.id,
-      type: "purchase",
-      amount: gift.price,
-      status: "success",
-      reference: txRef,
-      description: `شراء ${gift.name} - دفع ${method}`,
-      metadata: { payment_id: payment.id, user_gift_id: userGift.id, idempotency_key: idempotencyKey },
-    });
-
-    // Send notification
-    await supabase.from("notifications").insert({
-      user_id: user.id,
-      title: "تمت عملية الشراء بنجاح",
-      message: `تم شراء ${gift.name} بنجاح. يمكنك الآن مبادلتها مع بطاقة شبكة.`,
-      type: "payment",
-    });
+    if (rpcResult.duplicate) {
+      return new Response(JSON.stringify({
+        success: true,
+        alreadyProcessed: true,
+        paymentId: rpcResult.payment_id,
+        reference: rpcResult.reference,
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     return new Response(JSON.stringify({
       success: true,
-      paymentId: payment.id,
-      userGiftId: userGift.id,
-      reference: paymentRef,
-      giftName: gift.name,
+      paymentId: rpcResult.payment_id,
+      userGiftId: rpcResult.user_gift_id,
+      reference: rpcResult.reference,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
   } catch (err) {
-    return new Response(JSON.stringify({ error: "حدث خطأ غير متوقع" }), {
+    const message = err instanceof Error ? err.message : "حدث خطأ غير متوقع";
+    return new Response(JSON.stringify({ error: message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

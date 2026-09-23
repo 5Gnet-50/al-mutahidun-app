@@ -1,8 +1,8 @@
 [project]
 name = "al-mutahidun"
 
-[functions.process-payment]
+[functions."process-payment"]
 verify_jwt = true
 
-[functions/process-exchange]
+[functions."process-exchange"]
 verify_jwt = true
