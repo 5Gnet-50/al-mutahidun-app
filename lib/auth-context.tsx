@@ -100,7 +100,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (isPhoneLike(identifier)) {
       const phone = normalizePhone(identifier);
       if (!phone) {
-        return { error: 'رقم الهاتف غير صحيح. يجب أن يكون 9 أرقام تبدأ بـ 7' };
+        return { error: 'رقم الهاتف أو اسم المستخدم غير موجود' };
+      }
+      const { data: exists, error: existsError } = await supabase.rpc(
+        'phone_exists',
+        { p_phone: phone }
+      );
+      if (existsError || !exists) {
+        return { error: 'رقم الهاتف أو اسم المستخدم غير موجود' };
       }
       email = `${phone}@mutahidun.app`;
     } else {
@@ -109,7 +116,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         { p_username: identifier.trim() }
       );
       if (rpcError || !phoneResult) {
-        return { error: 'اسم المستخدم غير موجود' };
+        return { error: 'رقم الهاتف أو اسم المستخدم غير موجود' };
       }
       email = `${phoneResult}@mutahidun.app`;
     }
