@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { supabase } from '@/lib/supabase-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -45,6 +46,12 @@ export default function RegisterPage() {
       return;
     }
 
+    const phoneDigits = form.phone.replace(/\D/g, '');
+    if (phoneDigits.length !== 9 || !phoneDigits.startsWith('7')) {
+      toast.error('رقم الهاتف يجب أن يكون 9 أرقام تبدأ بـ 7');
+      return;
+    }
+
     setLoading(true);
     const { error } = await signUp({
       name: form.name,
@@ -52,15 +59,22 @@ export default function RegisterPage() {
       phone: form.phone,
       password: form.password,
     });
-    setLoading(false);
 
     if (error) {
+      setLoading(false);
       toast.error(error);
       return;
     }
 
     toast.success('تم إنشاء الحساب بنجاح');
-    router.push('/dashboard');
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.user) {
+      router.push('/dashboard');
+    } else {
+      setLoading(false);
+      router.push('/login');
+    }
   };
 
   return (
@@ -105,7 +119,7 @@ export default function RegisterPage() {
               type="tel"
               value={form.phone}
               onChange={(e) => handleChange('phone', e.target.value)}
-              placeholder="أدخل رقم هاتفك"
+              placeholder="7XXXXXXXX"
               className="bg-secondary/50 border-border"
               autoComplete="tel"
               dir="ltr"
