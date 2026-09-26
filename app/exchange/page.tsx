@@ -27,7 +27,7 @@ function ExchangeContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const giftIdParam = searchParams.get('giftId');
-  const { profile } = useAuth();
+  const { profile, loading: authLoading } = useAuth();
   const toast = useAppToast();
 
   const [networks, setNetworks] = useState<Network[]>([]);
@@ -39,19 +39,20 @@ function ExchangeContent() {
   const idempotencyKey = useRef<string | null>(null);
 
   useEffect(() => {
+    if (authLoading) return;
+    if (!profile || !giftIdParam) {
+      setLoading(false);
+      return;
+    }
+    const uid = profile.id;
     async function fetchData() {
-      if (!profile || !giftIdParam) {
-        setLoading(false);
-        return;
-      }
-
       const [netRes, giftRes] = await Promise.all([
         supabase.from('networks').select('*').eq('is_active', true).order('name'),
         supabase
           .from('user_gifts')
           .select(`*, gift:gifts(*)`)
           .eq('id', giftIdParam)
-          .eq('user_id', profile.id)
+          .eq('user_id', uid)
           .maybeSingle(),
       ]);
 
@@ -60,7 +61,7 @@ function ExchangeContent() {
       setLoading(false);
     }
     fetchData();
-  }, [profile, giftIdParam]);
+  }, [profile, giftIdParam, authLoading]);
 
   const handleConfirmExchange = async () => {
     if (!userGift || !selectedNetwork || !profile) return;

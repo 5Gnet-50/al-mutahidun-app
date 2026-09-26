@@ -26,22 +26,27 @@ export default function MyGiftsPage() {
 }
 
 function MyGiftsContent() {
-  const { profile } = useAuth();
+  const { profile, loading: authLoading } = useAuth();
   const router = useRouter();
   const [gifts, setGifts] = useState<UserGift[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('available');
 
   useEffect(() => {
+    if (authLoading) return;
+    if (!profile) {
+      setLoading(false);
+      return;
+    }
+    const uid = profile.id;
     async function fetchGifts() {
-      if (!profile) return;
       const { data, error } = await supabase
         .from('user_gifts')
         .select(`
           *,
           gift:gifts(*)
         `)
-        .eq('user_id', profile.id)
+        .eq('user_id', uid)
         .order('created_at', { ascending: false });
       if (!error && data) {
         setGifts(data as unknown as UserGift[]);
@@ -49,7 +54,7 @@ function MyGiftsContent() {
       setLoading(false);
     }
     fetchGifts();
-  }, [profile]);
+  }, [profile, authLoading]);
 
   const filtered = gifts.filter((g) => g.status === tab);
 

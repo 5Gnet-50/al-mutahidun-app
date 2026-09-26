@@ -24,25 +24,30 @@ export default function DashboardPage() {
 }
 
 function DashboardContent() {
-  const { profile } = useAuth();
+  const { profile, loading: authLoading } = useAuth();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (authLoading) return;
+    if (!profile) {
+      setLoading(false);
+      return;
+    }
+    const uid = profile.id;
     async function fetchData() {
-      if (!profile) return;
       const [txRes, notifRes] = await Promise.all([
         supabase
           .from('transactions')
           .select('*')
-          .eq('user_id', profile.id)
+          .eq('user_id', uid)
           .order('created_at', { ascending: false })
           .limit(5),
         supabase
           .from('notifications')
           .select('id', { count: 'exact', head: true })
-          .eq('user_id', profile.id)
+          .eq('user_id', uid)
           .eq('is_read', false),
       ]);
       setTransactions(txRes.data as Transaction[] || []);
@@ -50,7 +55,7 @@ function DashboardContent() {
       setLoading(false);
     }
     fetchData();
-  }, [profile]);
+  }, [profile, authLoading]);
 
   const quickActions = [
     { href: '/gifts', label: 'الهدايا', icon: Gift, desc: 'تصفح واشترِ', color: 'from-primary/20 to-primary/5 text-primary' },
