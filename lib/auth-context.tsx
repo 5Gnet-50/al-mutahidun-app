@@ -100,7 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (isPhoneLike(identifier)) {
       const phone = normalizePhone(identifier);
       if (!phone) {
-        return { error: 'رقم الهاتف أو اسم المستخدم غير موجود' };
+        return { error: 'رقم الهاتف غير صحيح. يجب أن يكون 9 أرقام تبدأ بـ 7' };
       }
       const { data: exists, error: existsError } = await supabase.rpc(
         'phone_exists',
